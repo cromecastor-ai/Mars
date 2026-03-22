@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Invasión en Malpartida - Retro Arcade</title>
+    <style>
+        :root {
+            --pixel-size: 4px;
+            --retro-green: #33ff33;
+            --retro-red: #ff3333;
+            --retro-yellow: #ffff33;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            color: white;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+            touch-action: none;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        /* Contenedor del Área de Juego (16:9 Vertical) */
+        #gameContainer {
+            position: relative;
+            aspect-ratio: 9 / 16;
+            height: 98vh; /* Maximiza altura en PC */
+            max-height: 100vw; /* Asegura que quepa en móvil */
+            background: radial-gradient(circle, #111 0%, #000 70%);
+            border: 4px solid #444;
+            box-shadow: 0 0 20px rgba(51, 255, 51, 0.3);
+            overflow: hidden;
+        }
+
+        @media (max-width: 600px) {
+            #gameContainer {
+                height: auto;
+                width: 95vw;
+                aspect-ratio: 9 / 16;
+            }
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        /* Pantallas Superpuestas */
+        .overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            z-index: 10;
+            transition: opacity 0.5s;
+        }
+
+        /* Intro Scroller */
+        #introScreen {
+            background: black;
+            color: var(--retro-green);
+        }
+
+        #introText {
+            width: 80%;
+            line-height: 1.6;
+            transform: perspective(300px) rotateX(25deg);
+            transform-origin: 50% 100%;
+            animation: scrollText 15s linear forwards;
+        }
+
+        @keyframes scrollText {
+            0% { transform: perspective(300px) rotateX(25deg) translateY(100%); }
+            100% { transform: perspective(300px) rotateX(25deg) translateY(-120%); }
+        }
+
+        .pixel-text {
+            font-size: 20px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+
+        .highlight { color: white; }
+
+        #levelMsg, #gameOver, #winScreen { display: none; }
+
+        /* Estilo de la Nave Nodriza (Bloques) */
+        #mothershipHealth {
+            position: absolute;
+            top: 40px; left: 50%;
+            transform: translateX(-50%);
+            color: var(--retro-red);
+            font-size: 14px;
+            text-shadow: 0 0 5px red;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="mothershipHealth">INTEGRIDAD: 100%</div>
+
+        <div id="introScreen" class="overlay">
+            <div id="introText">
+                <p class="pixel-text">Erase una vez hace mucho mucho tiempo...</p>
+                <p class="pixel-text highlight">Ayer por la mañana.</p>
+                <p class="pixel-text">En un Lugar muy muy lejano...</p>
+                <p class="pixel-text highlight">En Malpartida.</p>
+                <p class="pixel-text">Comenzo una invasión extraterrestre que debes impedir.</p>
+                <p class="pixel-text" style="color:var(--retro-red); margin-top:50px;">Prepárate...</p>
+            </div>
+        </div>
+
+        <div id="countdownScreen" class="overlay" style="display:none;">
+            <div class="pixel-text" style="font-size:60px; color:white;" id="countdownValue">3</div>
+        </div>
+
+        <div id="levelMsg" class="overlay">
+            <div class="pixel-text" style="color:var(--retro-yellow)" id="rewardText">REGALO</div>
+            <div class="pixel-text">PREPARANDO FASE <span id="nextLevelNum">2</span></div>
+        </div>
+
+        <div id="gameOver" class="overlay">
+            <div class="pixel-text" style="color:var(--retro-red); font-size:40px;">GAME OVER</div>
+            <div class="pixel-text">Una oveja te aplastó. Malpartida está perdida.</div>
+            <p style="color:#888;">Toca para reiniciar</p>
+        </div>
+
+        <div id="winScreen" class="overlay">
+            <div class="pixel-text" style="color:var(--retro-green); font-size:40px;">¡VICTORIA!</div>
+            <div class="pixel-text highlight">Has salvado Malpartida</div>
+            <div class="pixel-text" style="color:var(--retro-yellow);">Eres Hijo Predilecto.</div>
+            <canvas id="sheepDanceCanvas" width="200" height="100"></canvas>
+            <p style="color:#888; margin-top:20px;">Toca para jugar de nuevo</p>
+        </div>
+
+    </div>
+
+    <script>
+        // --- CONFIGURACIÓN CONSTANTE ---
+        const C_WIDTH = 360; // Base lógica 9
+        const C_HEIGHT = 640; // Base lógica 16
+        const P_SIZE = 4; // Tamaño pixel base
+
+        // --- CORE DEL JUEGO ---
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        // Ajustar resolución interna para que se vea nítido
+        canvas.width = C_WIDTH;
+        canvas.height = C_HEIGHT;
+        ctx.imageSmoothingEnabled = false; // Look Pixel Art
+
+        // Estado del Juego
+        let gameState = 'INTRO'; // INTRO, COUNTDOWN, PLAYING, LEVEL_MSG, GAMEOVER, WIN
+        let currentLevel = 1;
+        let score = 0;
+        let lives = 3;
+        let input = { left: false, right: false, shoot: false };
+        let countdownInterval;
+
+        // Entidades
+        let player, bullets, aliens, alienBullets, particles, mothership, sheeps;
+
+        // --- ARTE PIXEL (DEFINICIÓN MATRICIAL) ---
+        const SPRITES = {
+            player: [ [0,0,1,0,0],[0,1,1,1,0],[1,1,1,1,1],[1,0,1,0,1] ],
+            alien1: [ [0,1,0,0,0,1,0],[0,0,1,1,1,0,0],[0,1,1,1,1,1,0],[1,1,0,1,0,1,1],[1,1,1,1,1,1,1],[0,1,0,1,0,1,0],[1,0,0,0,0,0,1] ],
+            sheep: [ [0,0,1,1,1,0],[0,1,1,1,1,1],[0,1,0,1,0,1],[1,1,1,1,1,1],[0,1,1,1,1,0],[0,1,0,1,0,0] ] // Simple retro sheep
+        };
+
+        function drawSprite(sprite, x, y, color, scale = 1) {
+            ctx.fillStyle = color;
+            sprite.forEach((row, dy) => {
+                row.forEach((pixel, dx) => {
+                    if (pixel) {
+                        ctx.fillRect(x + dx * P_SIZE * scale, y + dy * P_SIZE * scale, P_SIZE * scale, P_SIZE * scale);
+                    }
+                });
+            });
+        }
+
+        // --- INICIALIZADORES ---
+        function initPlayer() {
+            player = { x: C_WIDTH / 2 - 10, y: C_HEIGHT - 50, w: 20, h: 16, speed: 4, cooldown: 0 };
+            bullets = [];
+        }
+
+        function initAliens() {
+            aliens = [];
+            alienBullets = [];
+            let rows = currentLevel === 1 ? 3 : 4;
+            let cols = currentLevel === 1 ? 6 : 8;
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    aliens.push({
+                        x: 40 + c * 35, y: 80 + r * 30, w: 28, h: 28, alive: true,
+                        type: SPRITES.alien1, color: r % 2 === 0 ? '#3f3' : '#f3f'
+                    });
+                }
+            }
+            // Lógica de movimiento alien
+            alienState = { dir: 1, moveTimer: 0, speed: 40 - (currentLevel * 5), drop: false };
+        }
+
+        // Fase 3: La Gran Nave de Malpartida
+        function initMothership() {
+            let cols = 12;
+            let rows = 6;
+            let blockSize = 20;
+            mothership = {
+                x: C_WIDTH / 2 - (cols * blockSize)/2, y: 60,
+                w: cols * blockSize, h: rows * blockSize,
+                blockSize: blockSize, cols: cols, rows: rows,
+                blocks: [], healthMax: cols * rows, healthCurrent: cols * rows,
+                sheepTimer: 0, moveDir: 1
+            };
+            for (let r = 0; r < rows; r++) {
+                mothership.blocks[r] = [];
+                for (let c = 0; c < cols; c++) {
+                    mothership.blocks[r][c] = { alive: true, color: `hsl(${200 + r*10}, 100%, ${60-r*5}%)` };
+                }
+            }
+            sheeps = [];
+            document.getElementById('mothershipHealth').style.display = 'block';
+        }
+
+        // --- LÓGICA DE CONTROLES (PC & MÓVIL) ---
+        // PC Keydown
+        window.addEventListener('keydown', e => {
+            if (e.code === 'ArrowLeft') input.left = true;
+            if (e.code === 'ArrowRight') input.right = true;
+            if (e.code === 'Space') input.shoot = true;
+        });
+        window.addEventListener('keyup', e => {
+            if (e.code === 'ArrowLeft') input.left = false;
+            if (e.code === 'ArrowRight') input.right = false;
+            if (e.code === 'Space') input.shoot = false;
+        });
+
+        // Móvil Touch
+        const container = document.getElementById("gameContainer");
+        container.addEventListener('touchstart', handleTouch);
+        container.addEventListener('touchmove', handleTouch);
+        container.addEventListener('touchend', (e) => {
+            if (gameState === 'GAMEOVER' || gameState === 'WIN') location.reload();
+            input.left = false; input.right = false; input.shoot = false;
+        });
+
+        function handleTouch(e) {
+            e.preventDefault();
+            const rect = container.getBoundingClientRect();
+            const touch = e.touches[0];
+            const touchX = touch.clientX - rect.left;
+            const normX = touchX / rect.width; // 0 a 1
+
+            if (normX < 0.25) { // Izquierda
+                input.left = true; input.right = false;
+            } else if (normX > 0.75) { // Derecha
+                input.right = true; input.left = false;
+            } else { // Centro
+                input.shoot = true;
+                if (gameState === 'PLAYING' && currentLevel === 3) input.shoot = true; // Permite hold en Fase 3
+            }
+        }
+
+
+        // --- BUCLE PRINCIPAL (UPDATE & DRAW) ---
+        function gameLoop() {
+            ctx.clearRect(0, 0, C_WIDTH, C_HEIGHT);
+
+            if (gameState === 'PLAYING') {
+                updatePlayer();
+                updateBullets();
+                if (currentLevel < 3) {
+                    updateAliens();
+                } else {
+                    updateMothership();
+                }
+                drawHUD();
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- ACTUALIZACIONES DE ENTIDADES ---
+
+        function drawHUD() {
+            ctx.fillStyle = 'white';
+            ctx.font = '16px Courier New';
+            ctx.fillText(`PUNTOS: ${score}`, 10, 25);
+            ctx.fillText(`FASE: ${currentLevel}`, C_WIDTH - 80, 25);
+        }
+
+        function updatePlayer() {
+            // Movimiento
+            if (input.left) player.x -= player.speed;
+            if (input.right) player.x += player.speed;
+            // Límites
+            if (player.x < 10) player.x = 10;
+            if (player.x > C_WIDTH - player.w - 10) player.x = C_WIDTH - player.w - 10;
+
+            // Disparo
+            if (player.cooldown > 0) player.cooldown--;
+            if (input.shoot && player.cooldown === 0) {
+                bullets.push({ x: player.x + player.w/2 - 2, y: player.y, w: 4, h: 10, speed: 7 });
+                player.cooldown = 15; // Cadencia normal
+                if (currentLevel === 3) player.cooldown = 10; // Más rápido en fase final
+            }
+
+            drawSprite(SPRITES.player, player.x, player.y, '#3f3');
+        }
+
+        function updateBullets() {
+            ctx.fillStyle = '#ff3';
+            bullets.forEach((b, index) => {
+                b.y -= b.speed;
+                ctx.fillRect(b.x, b.y, b.w, b.h);
+                // Salir de pantalla
+                if (b.y < 0) bullets.splice(index, 1);
+            });
+
+            ctx.fillStyle = '#f33';
+            alienBullets.forEach((b, index) => {
+                b.y += b.speed;
+                ctx.fillRect(b.x, b.y, b.w, b.h);
+                // Impacto en jugador
+                if (b.x < player.x + player.w && b.x + b.w > player.x &&
+                    b.y < player.y + player.h && b.y + b.h > player.y) {
+                    setGameOver();
+                }
+                if (b.y > C_HEIGHT) alienBullets.splice(index, 1);
+            });
+        }
+
+        function updateAliens() {
+            alienState.moveTimer++;
+            let edgeReached = false;
+            let aliveCount = 0;
+
+            aliens.forEach(a => {
+                if (!a.alive) return;
+                aliveCount++;
+                drawSprite(a.type, a.x, a.y, a.color);
+
+                // Lógica movimiento
+                if (alienState.moveTimer >= alienState.speed) {
+                    a.x += (10 * alienState.dir);
+                    if (a.x > C_WIDTH - a.w - 10 || a.x < 10) edgeReached = true;
+                }
+
+                // Colisión con balas jugador
+                bullets.forEach((b, bIndex) => {
+                    if (b.x < a.x + a.w && b.x + b.w > a.x && b.y < a.y + a.h && b.y + b.h > a.y) {
+                        a.alive = false;
+                        bullets.splice(bIndex, 1);
+                        score += 10;
+                    }
+                });
+
+                // Disparo alien
+                if (Math.random() < 0.001 * currentLevel) { // Probabilidad basada en nivel
+                    alienBullets.push({ x: a.x + a.w/2, y: a.y + a.h, w: 4, h: 10, speed: 4 });
+                }
+                
+                // Llegada a la base
+                if (a.y > player.y - 20) setGameOver();
+            });
+
+            if (alienState.moveTimer >= alienState.speed) {
+                alienState.moveTimer = 0;
+                if (edgeReached) {
+                    alienState.dir *= -1;
+                    aliens.forEach(a => a.y += 20); // Bajar
+                }
+            }
+
+            // Victoria de fase
+            if (aliveCount === 0) completeLevel();
+        }
+
+        // --- FASE 3: LÓGICA DE LA NAVE NODRIZA Y OVEJAS ---
+        function updateMothership() {
+            // Movimiento suave horizontal
+            mothership.x += (1 * mothership.moveDir);
+            if (mothership.x > C_WIDTH - mothership.w - 10 || mothership.x < 10) mothership.moveDir *= -1;
+
+            let blocksHit = 0;
+
+            // Dibujar y colisionar bloques
+            for (let r = 0; r < mothership.rows; r++) {
+                for (let c = 0; c < mothership.cols; c++) {
+                    let b = mothership.blocks[r][c];
+                    if (!b.alive) continue;
+
+                    let bx = mothership.x + c * mothership.blockSize;
+                    let by = mothership.y + r * mothership.blockSize;
+
+                    // Dibujar bloque estilo retro
+                    ctx.fillStyle = b.color;
+                    ctx.fillRect(bx+1, by+1, mothership.blockSize-2, mothership.blockSize-2);
+
+                    // Colisión balas jugador
+                    bullets.forEach((bullet, bIndex) => {
+                        if (bullet.x < bx + mothership.blockSize && bullet.x + bullet.w > bx &&
+                            bullet.y < by + mothership.blockSize && bullet.y + bullet.h > by) {
+                            b.alive = false;
+                            bullets.splice(bIndex, 1);
+                            mothership.healthCurrent--;
+                            score += 5;
+                            blocksHit++;
+                        }
+                    });
+                }
+            }
+
+            // Actualizar Salud UI
+            let healthPct = Math.floor((mothership.healthCurrent / mothership.healthMax) * 100);
+            document.getElementById('mothershipHealth').innerText = `INTEGRIDAD: ${healthPct}%`;
+
+            // Lógica de caída de ovejas
+            mothership.sheepTimer++;
+            if (mothership.sheepTimer > 60 - healthPct/2) { // Caen más rápido cuanto más rota está
+                // Elegir una columna aleatoria de la nave nodriza
+                let col = Math.floor(Math.random() * mothership.cols);
+                // Encontrar el bloque más bajo vivo en esa columna
+                let startY = mothership.y + mothership.h;
+                for(let r = mothership.rows -1; r>=0; r--) {
+                    if(mothership.blocks[r][col].alive) {
+                        startY = mothership.y + (r * mothership.blockSize);
+                        break;
+                    }
+                }
+
+                sheeps.push({ x: mothership.x + col * mothership.blockSize, y: startY, w: 24, h: 24, speed: 3 + (100-healthPct)/50 });
+                mothership.sheepTimer = 0;
+            }
+
+            updateSheeps();
+
+            // Condición de Victoria: 70% borrado (queda 30% o menos)
+            if (healthPct <= 30) {
+                setWin();
+            }
+        }
+
+        function updateSheeps() {
+            sheeps.forEach((s, index) => {
+                s.y += s.speed;
+                // Dibujar Oveja Retro
+                drawSprite(SPRITES.sheep, s.x, s.y, 'white');
+
+                // Colisión Oveja - Jugador -> GAME OVER
+                if (s.x < player.x + player.w && s.x + s.w > player.x &&
+                    s.y < player.y + player.h && s.y + s.h > player.y) {
+                    setGameOver();
+                }
+
+                // Limpiar
+                if (s.y > C_HEIGHT) sheeps.splice(index, 1);
+            });
+        }
+
+
+        // --- CAMBIOS DE ESTADO (FLUJO DEL JUEGO) ---
+
+        // Finalizar Intro automáticamente tras 15s
+        setTimeout(() => {
+            if (gameState === 'INTRO') startCountdown();
+        }, 15000);
+
+        function startCountdown() {
+            gameState = 'COUNTDOWN';
+            document.getElementById('introScreen').style.opacity = 0;
+            setTimeout(() => document.getElementById('introScreen').style.display = 'none', 500);
+            
+            document.getElementById('countdownScreen').style.display = 'flex';
+            let count = 3;
+            const countEl = document.getElementById('countdownValue');
+            
+            clearInterval(countdownInterval);
+            countdownInterval = setInterval(() => {
+                count--;
+                if (count > 0) {
+                    countEl.innerText = count;
+                } else if (count === 0) {
+                    countEl.innerText = "¡FUERA!";
+                    countEl.style.color = 'var(--retro-green)';
+                } else {
+                    clearInterval(countdownInterval);
+                    startGame();
+                }
+            }, 1000);
+        }
+
+        function startGame() {
+            document.getElementById('countdownScreen').style.display = 'none';
+            document.getElementById('gameOver').style.display = 'none';
+            gameState = 'PLAYING';
+            initPlayer();
+            initAliens();
+            if(currentLevel === 3) initMothership();
+        }
+
+        function completeLevel() {
+            gameState = 'LEVEL_MSG';
+            let msg = currentLevel === 1 ? "Los Malpartideños te han regalado un burro." : "Te han regalado una entrada al museo.";
+            document.getElementById('rewardText').innerText = msg;
+            currentLevel++;
+            document.getElementById('nextLevelNum').innerText = currentLevel;
+            document.getElementById('levelMsg').style.display = 'flex';
+
+            bullets = []; alienBullets = []; // Limpiar balas
+
+            setTimeout(() => {
+                document.getElementById('levelMsg').style.display = 'none';
+                startCountdown();
+            }, 4000);
+        }
+
+        function setGameOver() {
+            gameState = 'GAMEOVER';
+            document.getElementById('gameOver').style.display = 'flex';
+            document.getElementById('mothershipHealth').style.display = 'none';
+        }
+
+        function setWin() {
+            gameState = 'WIN';
+            document.getElementById('mothershipHealth').style.display = 'none';
+            document.getElementById('winScreen').style.display = 'flex';
+            startSheepDance();
+        }
+
+        // --- HUEVO DE PASCUA: OVEJAS BAILANDO ---
+        function startSheepDance() {
+            const sCanvas = document.getElementById("sheepDanceCanvas");
+            const sCtx = sCanvas.getContext("2d");
+            let frame = 0;
+
+            function anim() {
+                if (gameState !== 'WIN') return;
+                sCtx.clearRect(0,0, sCanvas.width, sCanvas.height);
+                for(let i=0; i<3; i++) {
+                    // Baile Y oscilante
+                    let bounce = Math.sin((frame + i*20) * 0.1) * 10;
+                    // Dibujar ovejas escaladas
+                    sCtx.fillStyle = 'white';
+                    SPRITES.sheep.forEach((row, dy) => {
+                        row.forEach((pixel, dx) => {
+                            if (pixel) {
+                                sCtx.fillRect(30 + i*60 + dx * 3, 20 + dy * 3 + bounce, 3, 3);
+                            }
+                        });
+                    });
+                }
+                frame++;
+                requestAnimationFrame(anim);
+            }
+            anim();
+        }
+
+        // --- INICIO ---
+        gameLoop();
+
+    </script>
+</body>
+</html>
