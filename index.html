@@ -548,8 +548,8 @@
             e.preventDefault();
             const normX = (touch.clientX - rect.left) / rect.width;
 
-            if (normX <= 0.15) { input.left = true; input.right = false; input.shoot = false; }
-            else if (normX >= 0.85) { input.right = true; input.left = false; input.shoot = false; }
+            if (normX <= 0.20) { input.left = true; input.right = false; input.shoot = false; }
+            else if (normX >= 0.80) { input.right = true; input.left = false; input.shoot = false; }
             else { input.shoot = true; input.shootTap = true; input.left = false; input.right = false; }
         }
 
