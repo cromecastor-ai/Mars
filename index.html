@@ -535,14 +535,22 @@
         });
 
         function handleTouch(e) {
-            e.preventDefault();
             const rect = container.getBoundingClientRect();
             const touch = e.touches[0];
+            const normY = (touch.clientY - rect.top) / rect.height;
+
+            if (normY > 0.9) {
+                // Dejar sin cubrir el último 10% de abajo para controles de Android
+                input.left = false; input.right = false; input.shoot = false; input.shootTap = false;
+                return;
+            }
+
+            e.preventDefault();
             const normX = (touch.clientX - rect.left) / rect.width;
 
-            if (normX < 0.3) { input.left = true; input.right = false; }
-            else if (normX > 0.7) { input.right = true; input.left = false; }
-            else { input.shoot = true; input.shootTap = true; }
+            if (normX <= 0.15) { input.left = true; input.right = false; input.shoot = false; }
+            else if (normX >= 0.85) { input.right = true; input.left = false; input.shoot = false; }
+            else { input.shoot = true; input.shootTap = true; input.left = false; input.right = false; }
         }
 
         // Eventos Reiniciar
